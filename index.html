@@ -362,6 +362,54 @@
   }
   .btn-clear:hover { background: #fdf6ee; }
 
+  /* ── Contract lookup ── */
+  .contract-lookup {
+    background: #fff;
+    border: 1px solid #e8e0d8;
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+    margin-top: 30px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .contract-lookup label {
+    font-size: 14px;
+    color: #9a8c82;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .contract-lookup input {
+    flex: 1;
+    min-width: 180px;
+    border: 1px solid #ddd6ce;
+    border-radius: 5px;
+    padding: 7px 10px;
+    font-size: 15px;
+    font-family: inherit;
+    color: #3a2e28;
+    background: #fdfcfb;
+    outline: none;
+    transition: border-color 0.2s;
+    letter-spacing: 1px;
+  }
+  .contract-lookup input:focus { border-color: #c8a882; }
+  .contract-lookup button {
+    background: #3a2e28;
+    color: #fff;
+    border: none;
+    padding: 8px 20px;
+    border-radius: 5px;
+    font-size: 15px;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s;
+  }
+  .contract-lookup button:hover { background: #5a4a3f; }
+
   /* ── Submit ── */
   .submit-area {
     margin-top: 28px;
@@ -417,6 +465,13 @@
 </div>
 
 <div class="container">
+
+  <!-- Contract lookup -->
+  <div class="contract-lookup">
+    <label>修改已送出的合約：</label>
+    <input type="text" id="lookup-id" placeholder="輸入合約編號，例：AWD-M1J9QR3K-4XP2" autocomplete="off" spellcheck="false">
+    <button type="button" onclick="handleLookup()">載入</button>
+  </div>
 
   <!-- Notice -->
   <div class="notice">
@@ -833,7 +888,11 @@
 <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/zh-tw.js"></script>
 <script>
   // ── 請將 Apps Script 部署後的網址填入此處 ──
-  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbynG5gsBls7A7uspHSxBtGYkIXkyj2uq90jkQMmkHPayGStOvM5o-7UDv4wv72iTmYX5g/exec';
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzHSlOm3O98_D5bhsgPHF065vtyDtJgn-TOq68PkU5YNkS9WIT9dhQWmcIVVckLrYiP9A/exec';
+
+  let editContractId = null;
+  let existingSigUrl = '';
+  let sigDrawn = false;
 
   // ── ROC date auto-fill ──
   (function() {
@@ -904,7 +963,7 @@
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
-  canvas.addEventListener('mousedown', e => { drawing = true; const p = getPos(e); lastX = p.x; lastY = p.y; });
+  canvas.addEventListener('mousedown', e => { drawing = true; sigDrawn = true; const p = getPos(e); lastX = p.x; lastY = p.y; });
   canvas.addEventListener('mousemove', e => {
     if (!drawing) return;
     const p = getPos(e);
@@ -917,7 +976,7 @@
   canvas.addEventListener('mouseup', () => drawing = false);
   canvas.addEventListener('mouseleave', () => drawing = false);
 
-  canvas.addEventListener('touchstart', e => { e.preventDefault(); drawing = true; const p = getPos(e); lastX = p.x; lastY = p.y; }, { passive: false });
+  canvas.addEventListener('touchstart', e => { e.preventDefault(); drawing = true; sigDrawn = true; const p = getPos(e); lastX = p.x; lastY = p.y; }, { passive: false });
   canvas.addEventListener('touchmove', e => {
     e.preventDefault();
     if (!drawing) return;
@@ -960,7 +1019,11 @@
     const genderMap = { male: '公', female: '母' };
     const paymentMap = { cash: '現金', transfer: '轉帳', full: '已全額付清', partial: '部分付款' };
 
+    const contractId = editContractId ||
+      ('AWD-' + Date.now().toString(36).toUpperCase() + '-' + Math.random().toString(36).substring(2, 6).toUpperCase());
+
     const payload = {
+      contractId:     contractId,
       提交時間:       timestamp,
       寵物名:         document.getElementById('pet-name').value,
       品種:           document.getElementById('pet-breed').value,
@@ -995,7 +1058,7 @@
       身分證號:       document.getElementById('sign-id').value,
       電話:           document.getElementById('sign-phone').value,
       地址:           document.getElementById('sign-address').value,
-      簽名圖檔:       canvas.toDataURL('image/png'),
+      簽名圖檔:       sigDrawn ? canvas.toDataURL('image/png') : existingSigUrl,
     };
 
     const btn = document.getElementById('btn-submit');
@@ -1008,13 +1071,149 @@
         body: JSON.stringify(payload),
       });
       sessionStorage.setItem('contractData', JSON.stringify(payload));
+      sessionStorage.setItem('contractId', contractId);
       window.location.href = './signed';
     } catch (err) {
       btn.disabled = false;
-      btn.textContent = '確認送出';
+      btn.textContent = editContractId ? '更新合約' : '確認送出';
       alert('送出失敗，請確認網路連線後再試。');
     }
   }
+
+  // ── Edit mode：從 Apps Script 讀回資料並預填 ──────────────
+  async function loadContractData(id) {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#fdf6ee;border-bottom:2px solid #c8a882;padding:10px 20px;text-align:center;font-size:14px;color:#7a6050;z-index:1000;';
+    banner.textContent = '載入合約資料中…';
+    document.body.prepend(banner);
+
+    try {
+      const res = await fetch(`${APPS_SCRIPT_URL}?id=${encodeURIComponent(id)}`);
+      const json = await res.json();
+      if (json.result === 'ok') {
+        prefillForm(json.data);
+        banner.textContent = `正在修改合約：${id}`;
+        banner.style.background = '#edfdf4';
+        banner.style.borderColor = '#5cb878';
+        banner.style.color = '#2a7a3f';
+        document.getElementById('btn-submit').textContent = '更新合約';
+      } else {
+        banner.textContent = '找不到該合約，請確認連結是否正確。';
+        banner.style.background = '#fff0f0';
+        banner.style.borderColor = '#e88';
+        banner.style.color = '#a00';
+        editContractId = null;
+      }
+    } catch {
+      banner.textContent = '無法載入合約資料，請確認網路連線。';
+      banner.style.background = '#fff0f0';
+      banner.style.borderColor = '#e88';
+      banner.style.color = '#a00';
+      editContractId = null;
+    }
+  }
+
+  function prefillForm(d) {
+    function setText(id, val) {
+      const el = document.getElementById(id);
+      if (el && val !== undefined && val !== null && val !== '') el.value = val;
+    }
+    function setRadio(name, val) {
+      const el = document.querySelector(`input[name="${name}"][value="${val}"]`);
+      if (el) el.checked = true;
+    }
+    function setChecks(name, valStr) {
+      if (!valStr) return;
+      const vals = valStr.split(', ');
+      document.querySelectorAll(`input[name="${name}"]`).forEach(el => {
+        el.checked = vals.includes(el.value);
+      });
+    }
+
+    setText('pet-name',  d['寵物名']);
+    setText('pet-breed', d['品種']);
+    setText('pet-chip',  d['晶片號碼']);
+    setText('pet-age',   d['年齡']);
+    setText('pet-weight',d['體重']);
+
+    const genderRevMap = { '公': 'male', '母': 'female' };
+    if (d['性別']) setRadio('gender', genderRevMap[d['性別']]);
+    if (d['絕育情形'] === '已絕育') setRadio('neuter', 'yes');
+    else if (d['絕育情形'] === '未絕育') setRadio('neuter', 'no');
+    if (d['目視外觀'] === '正常') setRadio('appearance', 'normal');
+    else if (d['目視外觀'] === '異常') setRadio('appearance', 'abnormal');
+    if (d['定期疫苗'] === '是') setRadio('vaccine', 'yes');
+    else if (d['定期疫苗'] === '否') setRadio('vaccine', 'no');
+
+    setChecks('disease',     d['疾病史']);
+    setText('disease-other', d['其他疾病史']);
+    setChecks('personality', d['寵物個性']);
+    setText('pet-notes',     d['其他補充說明']);
+    setText('vet-clinic',    d['指定獸醫機構']);
+
+    setText('owner-name',     d['飼主姓名']);
+    setText('owner-phone',    d['聯絡電話']);
+    setText('emergency-name', d['緊急聯絡人']);
+    setText('emergency-phone',d['緊急聯絡電話']);
+    if (d['甲方是否飼主本人'] === '是') setRadio('is_owner', 'yes');
+    else if (d['甲方是否飼主本人'] === '否') setRadio('is_owner', 'no');
+    setText('owner-relation', d['與飼主關係']);
+
+    if (d['服務開始時間']) fpStart.setDate(d['服務開始時間'], true);
+    if (d['服務結束時間']) fpEnd.setDate(d['服務結束時間'], true);
+
+    setChecks('service',    d['服務內容']);
+    setText('service-other',d['其他服務']);
+    setText('fee-amount',   d['費用金額']);
+
+    const payRevMap = { '現金': 'cash', '轉帳': 'transfer', '已全額付清': 'full', '部分付款': 'partial' };
+    if (d['給付方式']) {
+      setRadio('payment', payRevMap[d['給付方式']]);
+      if (d['給付方式'] === '部分付款') document.getElementById('partial-row').style.display = 'flex';
+    }
+    setText('fee-partial-amount', d['已給付金額']);
+    setText('fee-partial-date',   d['餘款給付日期']);
+
+    if (d['照片同意'] === '同意') document.getElementById('photo-consent').checked = true;
+
+    setText('sign-name',    d['甲方姓名（簽署）']);
+    setText('sign-id',      d['身分證號']);
+    setText('sign-phone',   d['電話（簽署）']);
+    setText('sign-address', d['地址']);
+
+    const sigLink = d['簽名圖檔連結'];
+    if (sigLink && sigLink.startsWith('http')) {
+      existingSigUrl = sigLink;
+      const wrap = document.querySelector('.sig-area');
+      if (wrap) {
+        const note = document.createElement('p');
+        note.style.cssText = 'font-size:13px;color:#9a8c82;margin-top:8px;';
+        note.innerHTML = `既有簽名：<a href="${sigLink}" target="_blank" style="color:#c8a882">查看舊簽名</a>（若不重新簽名，則保留舊簽名）`;
+        wrap.insertAdjacentElement('afterend', note);
+      }
+    }
+  }
+
+  function handleLookup() {
+    const id = document.getElementById('lookup-id').value.trim();
+    if (!id) { alert('請輸入合約編號。'); return; }
+    editContractId = id;
+    loadContractData(id);
+  }
+
+  document.getElementById('lookup-id').addEventListener('keydown', e => {
+    if (e.key === 'Enter') handleLookup();
+  });
+
+  // 偵測 URL ?edit=合約編號
+  (function () {
+    const id = new URLSearchParams(window.location.search).get('edit');
+    if (id) {
+      document.getElementById('lookup-id').value = id;
+      editContractId = id;
+      loadContractData(id);
+    }
+  })();
 </script>
 
 </body>

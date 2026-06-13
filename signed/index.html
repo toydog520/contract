@@ -250,6 +250,7 @@
 
 <div class="toolbar">
   <button class="btn-tool secondary" onclick="history.back()">← 返回</button>
+  <button class="btn-tool secondary" id="btn-edit" style="display:none" onclick="editContract()">修改合約</button>
   <button class="btn-tool" onclick="window.print()">列印 ╱ 儲存 PDF</button>
 </div>
 
@@ -274,6 +275,17 @@
 
   const raw = sessionStorage.getItem('contractData');
   const data = raw ? JSON.parse(raw) : {};
+  const storedContractId = sessionStorage.getItem('contractId') || data.contractId || '';
+
+  if (storedContractId) {
+    const btn = document.getElementById('btn-edit');
+    if (btn) btn.style.display = '';
+  }
+
+  function editContract() {
+    const id = sessionStorage.getItem('contractId') || data.contractId;
+    if (id) window.location.href = '../?edit=' + encodeURIComponent(id);
+  }
 
   function rocToday() {
     const t = new Date();
@@ -295,6 +307,9 @@
     const img = data['簽名圖檔'];
     if (img && img.startsWith('data:image')) {
       return `<div class="sig-img-wrap"><img src="${img}" alt="甲方簽名"></div>`;
+    }
+    if (img && img.startsWith('http')) {
+      return `<div class="sig-img-wrap"><span class="sig-none">（保留原有簽名）</span></div>`;
     }
     return `<div class="sig-img-wrap"><span class="sig-none">（無簽名）</span></div>`;
   }
@@ -325,6 +340,7 @@
     <div class="notice">
       本契約經甲方攜回審閱 1 日，並於充分了解條文內容後簽署。<br>
       如於單次服務之情形，乙方已給予甲方即時、合理之審閱期間。
+      ${storedContractId ? `<br>合約編號：${esc(storedContractId)}` : ''}
     </div>
 
     <!-- 一、基本資料 -->
